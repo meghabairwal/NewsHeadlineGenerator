@@ -1,0 +1,809 @@
+#importing all packages 
+
+import pandas as pd
+import csv
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+%matplotlib inline
+
+import matplotlib.pyplot as plt
+import numpy as np
+import random
+import sys
+import io
+import os
+import datetime
+from bs4 import BeautifulSoup
+import requests as rq
+from tensorflow.keras.callbacks import LambdaCallback
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, LSTM
+from tensorflow.keras.optimizers import RMSprop
+from tensorflow import keras
+from pyspark.sql import functions as f
+
+#from Text import *
+#from LSTM_class import *
+from keras import layers, models, optimizers
+
+import os
+current_path = os.getcwd()
+
+#reading relevant data from the source
+df = pd.read_csv("all-the-news-2-1.csv", usecols = ["title","publication"])
+df.info()
+
+#reading TMZ data and storing it in TMZ 
+TMZ = df[df["publication"] == "TMZ"]
+TMZ = TMZ["title"]
+TMZ
+
+import matplotlib.pyplot as plt
+
+#plotting length sizes for TMZ
+plt.hist([len(title.split()) for title in TMZ])
+
+#defining vocab size
+maxwords = 5000
+
+# ***TMZ***
+TMZwords = []
+for title in TMZ:
+    title = title + " ENDLENDL" #add an end token to each of the titles
+    TMZwords.append(title)
+    
+# init the tokenizer with a out_of_vocabulary token 
+tokenizerTMZ = Tokenizer(oov_token="<OOV>")
+tokenizerTMZ.num_words = maxwords
+# generate word indexes
+tokenizerTMZ.fit_on_texts(TMZwords)
+
+# generate sequences and apply padding
+sequencesTMZ = tokenizerTMZ.texts_to_sequences(TMZwords)
+#TODO: reduce vocab to 10k 
+TMZset = set(i for j in sequencesTMZ for i in j)
+
+tokenizerTMZ.word_index
+len(TMZset)
+OOVcount = []
+for seq in sequencesTMZ:
+    OOVcount.append( list(seq).count(1) )
+
+OOVcount.count(0)
+print(len(OOVcount))
+seqlen = 4
+step = 1
+TMZtokens = []
+for x, seq in enumerate(sequencesTMZ):
+    if(OOVcount[x] > 0):
+        continue
+    if(len(seq)<seqlen + 1):
+        continue
+    for i in range(0, len(seq) - seqlen + 1, step):
+        TMZtokens.append(seq[i: i + seqlen])
+
+print(sequencesTMZ[5:10])
+TMZtokens[:10]
+TMZx = np.zeros((len(TMZtokens), seqlen-1), dtype=int)
+TMZy = np.zeros((len(TMZtokens), 1), dtype=int)
+print(TMZx.shape)
+for i, seq in enumerate(TMZtokens):
+    TMZx[i] = seq[:seqlen - 1]
+    TMZy[i] = seq[-1]
+
+TMZm = int(len(TMZy)*0.7)
+print(TMZm)
+TMZ_xtest = TMZx[:TMZm]
+TMZ_ytest = TMZy[:TMZm]
+TMZ_xtrain = TMZx[TMZm:]
+TMZ_ytrain = TMZy[TMZm:]
+
+#defining LSTM model
+def TMZlstm_model(sequence_length, vocab_size, layer_size):
+    model = models.Sequential()
+    model.add(layers.Embedding(vocab_size, layer_size))
+    model.add(layers.Dropout(0.4))
+    model.add(layers.LSTM(layer_size))    
+    model.add(layers.Dropout(0.4))
+    model.add(layers.Dense(vocab_size, activation='softmax'))
+    return model
+TMZmodel = TMZlstm_model(seqlen, len(TMZset), 32)
+optimizer = optimizers.Adam(learning_rate=0.01)
+TMZmodel.compile(loss='sparse_categorical_crossentropy', optimizer=optimizer)
+TMZmodel.summary()
+historyTMZ = TMZmodel.fit(TMZ_xtrain, TMZ_ytrain,
+             validation_data=(TMZ_xtest, TMZ_ytest),
+             epochs=10,
+             verbose=1)
+plt.plot(historyTMZ.history['loss'])
+plt.plot(historyTMZ.history['val_loss'])
+tokenizerTMZ.word_index
+TMZmodel.save("/Users/megha/tf")
+TMZs = tokenizerTMZ.texts_to_sequences(["The cops seen"])
+TMZinput = np.array(TMZs)
+maxTMZ = 0
+while(maxTMZ != 2):
+    print(TMZinput)
+    pred = TMZmodel.predict(TMZinput)
+    #print(tokenizerTMZ.sequences_to_texts([0]))
+    maxTMZ = np.argmax(pred)
+    print(tokenizerTMZ.sequences_to_texts([[maxTMZ]]))
+    TMZinput = np.append(TMZinput[0,1:], maxTMZ).reshape(1,seqlen-1)
+
+# **FOX NEWS**
+Fox = df[df["publication"] == "Fox News"]
+Fox = Fox["title"]
+print(Fox)
+
+plt.hist([len(title.split()) for title in Fox])
+maxwords = 5000
+Foxwords = []
+for title in Fox:
+    title = title + " ENDLENDL"
+    #add an end token to each of the titles
+    Foxwords.append(title)
+    
+# init the tokenizer with a out_of_vocabulary token 
+tokenizerFox = Tokenizer(oov_token="<OOV>")
+tokenizerFox.num_words = maxwords
+# generate word indexes
+tokenizerFox.fit_on_texts(Foxwords)
+
+# generate sequences and apply padding
+sequencesFox = tokenizerFox.texts_to_sequences(Foxwords)
+#TODO: reduce vocab to 10k 
+Foxset = set(i for j in sequencesFox for i in j)
+
+tokenizerFox.word_index
+len(Foxset)
+OOVcount = []
+for seq in sequencesFox:
+    OOVcount.append( list(seq).count(1) )
+
+OOVcount.count(0)
+print(len(OOVcount))
+seqlen = 4
+step = 1
+Foxtokens = []
+
+for x, seq in enumerate(sequencesFox):
+    if(OOVcount[x] > 0):
+        continue
+    if(len(seq)<seqlen + 1):
+        continue
+    for i in range(0, len(seq) - seqlen + 1, step):
+        Foxtokens.append(seq[i: i + seqlen])
+
+print(sequencesFox[:10])
+Foxtokens[:10]
+Foxx = np.zeros((len(Foxtokens), seqlen-1), dtype=int)
+Foxy = np.zeros((len(Foxtokens), 1), dtype=int)
+print(Foxx.shape)
+for i, seq in enumerate(Foxtokens):
+    Foxx[i] = seq[:seqlen - 1]
+    Foxy[i] = seq[-1]
+
+Foxm = int(len(Foxy)*0.7)
+print(Foxm)
+Fox_xtest = Foxx[:Foxm]
+Fox_ytest = Foxy[:Foxm]
+Fox_xtrain = Foxx[Foxm:]
+Fox_ytrain = Foxy[Foxm:]
+
+def Foxlstm_model(sequence_length, vocab_size, layer_size):
+    model = models.Sequential()
+    model.add(layers.Embedding(vocab_size, layer_size))
+    model.add(layers.Dropout(0.4))
+    model.add(layers.LSTM(layer_size))    
+    model.add(layers.Dropout(0.4))
+    model.add(layers.Dense(vocab_size, activation='softmax'))
+    return model
+
+Foxmodel = Foxlstm_model(seqlen, len(Foxset), 32)
+optimizer = optimizers.Adam(learning_rate=0.01)
+Foxmodel.compile(loss='sparse_categorical_crossentropy', optimizer=optimizer)
+
+historyFox = Foxmodel.fit(Fox_xtrain, Fox_ytrain,
+             validation_data=(Fox_xtest, Fox_ytest),
+             epochs=10,
+             verbose=1)
+
+plt.plot(historyFox.history['loss'])
+plt.plot(historyFox.history['val_loss'])
+
+tokenizerFox.word_index
+
+Foxs = tokenizerFox.texts_to_sequences(["Joe Biden wins"])
+Foxinput = np.array(Foxs)
+for i in range(10):
+    pred = Foxmodel.predict(Foxinput)
+    #print(tokenizerTMZ.sequences_to_texts([0]))
+    maxFox = np.argmax(pred)
+    print(tokenizerFox.sequences_to_texts([[maxFox]]))
+    Foxinput = np.append(Foxinput[0,1:], maxFox).reshape(1,seqlen-1)
+
+Foxmodel.save("/Users/megha/tf")
+
+# **NYT**
+
+NYT = df[df["publication"] == "The New York Times"]
+NYT = NYT["title"]
+NYT
+
+plt.hist([len(str(title).split()) for title in NYT])
+
+NYTwords = []
+for title in NYT:
+    title = str(title)
+    title = title + " ENDLENDL"
+    #add an end token to each of the titles
+    NYTwords.append(title)
+    
+# init the tokenizer with a out_of_vocabulary token 
+tokenizerNYT = Tokenizer(oov_token="<OOV>")
+tokenizerNYT.num_words = maxwords
+# generate word indexes
+tokenizerNYT.fit_on_texts(NYTwords)
+
+# generate sequences
+sequencesNYT = tokenizerNYT.texts_to_sequences(NYTwords)
+#TODO: reduce vocab to 10k 
+NYTset = set(i for j in sequencesNYT for i in j)
+
+len(NYTset)
+
+OOVcount = []
+for seq in sequencesNYT:
+    OOVcount.append( list(seq).count(1) )
+
+OOVcount.count(0)
+
+print(len(OOVcount))
+
+seqlen = 4
+step = 1
+NYTtokens = []
+#NYTf = paddedNYT[:10000].flatten()
+for x, seq in enumerate(sequencesNYT):
+    if(OOVcount[x] > 0):
+        continue
+    if(len(seq)<seqlen + 3):
+        continue
+    for i in range(0, len(seq) - seqlen + 1, step):
+        NYTtokens.append(seq[i: i + seqlen])
+
+print(sequencesNYT[5:10])
+NYTtokens[:10]
+
+NYTx = np.zeros((len(NYTtokens), seqlen-1), dtype=int)
+NYTy = np.zeros((len(NYTtokens), 1), dtype=int)
+print(NYTx.shape)
+for i, seq in enumerate(NYTtokens):
+    NYTx[i] = seq[:seqlen - 1]
+    NYTy[i] = seq[-1]
+
+NYTm = int(len(NYTy)*0.7)
+print(NYTm)
+NYT_xtest = NYTx[:NYTm]
+NYT_ytest = NYTy[:NYTm]
+NYT_xtrain = NYTx[NYTm:]
+NYT_ytrain = NYTy[NYTm:]
+
+def NYTlstm_model(sequence_length, vocab_size, layer_size):
+    model = models.Sequential()
+    model.add(layers.Embedding(vocab_size, layer_size))
+    model.add(layers.Dropout(0.4))
+    model.add(layers.LSTM(layer_size))    
+    model.add(layers.Dropout(0.4))
+    model.add(layers.Dense(vocab_size, activation='softmax'))
+    return model
+
+NYTmodel = NYTlstm_model(seqlen, len(NYTset), 32)
+optimizer = optimizers.Adam(learning_rate=0.01)
+NYTmodel.compile(loss='sparse_categorical_crossentropy', optimizer=optimizer)
+
+historyNYT = NYTmodel.fit(NYT_xtrain, NYT_ytrain,
+             validation_data=(NYT_xtest, NYT_ytest),
+             epochs=5,
+             verbose=1)
+
+plt.plot(historyNYT.history['loss'])
+plt.plot(historyNYT.history['val_loss'])
+
+tokenizerNYT.word_index
+
+NYTs = tokenizerNYT.texts_to_sequences([""])
+NYTinput = np.array(NYTs)
+maxNYT = 0
+while (maxNYT!=2):
+    pred = NYTmodel.predict(NYTinput)
+    #print(tokenizerNYT.sequences_to_texts([0]))
+    maxNYT = np.argmax(pred)
+    print(tokenizerNYT.sequences_to_texts([[maxNYT]]))
+    NYTinput = np.append(NYTinput[0,1:], maxNYT).reshape(1,seqlen-1)
+
+NYTmodel.save("/Users/megha/tf")
+# ***Reuters***
+
+REUTERS = df[df["publication"] == "Reuters"]
+REUTERS = REUTERS["title"]
+print(REUTERS)
+
+plt.hist([len(title.split()) for title in REUTERS])
+
+maxwords = 5000
+
+REUTERSwords = []
+for title in REUTERS:
+    title = title + " ENDLENDL"
+    #add an end token to each of the titles
+    REUTERSwords.append(title)
+    
+# init the tokenizer with a out_of_vocabulary token 
+tokenizerREUTERS = Tokenizer(oov_token="<OOV>")
+tokenizerREUTERS.num_words = maxwords
+# generate word indexes
+tokenizerREUTERS.fit_on_texts(REUTERSwords)
+
+# generate sequences and apply padding
+sequencesREUTERS = tokenizerREUTERS.texts_to_sequences(REUTERSwords)
+#TODO: reduce vocab to 10k 
+REUTERSset = set(i for j in sequencesREUTERS for i in j)
+
+tokenizerREUTERS.word_index
+
+len(REUTERSset)
+
+OOVcount = []
+for seq in sequencesREUTERS:
+    OOVcount.append( list(seq).count(1) )
+
+OOVcount.count(0)
+
+print(len(OOVcount))
+
+seqlen = 4
+step = 1
+REUTERStokens = []
+
+for x, seq in enumerate(sequencesREUTERS):
+    if(OOVcount[x] > 0):
+        continue
+    if(len(seq)<seqlen + 8):
+        continue
+    for i in range(0, len(seq) - seqlen + 1, step):
+        REUTERStokens.append(seq[i: i + seqlen])
+
+print(sequencesREUTERS[12:20])
+OOVcount[:10]
+print(REUTERStokens[0:13])
+
+REUTERSx = np.zeros((len(REUTERStokens), seqlen-1), dtype=int)
+REUTERSy = np.zeros((len(REUTERStokens), 1), dtype=int)
+print(REUTERSx.shape)
+for i, seq in enumerate(REUTERStokens):
+    REUTERSx[i] = seq[:seqlen - 1]
+    REUTERSy[i] = seq[-1]
+
+REUTERSm = int(len(REUTERSy)*0.7)
+print(REUTERSm)
+REUTERS_xtest = REUTERSx[:REUTERSm]
+REUTERS_ytest = REUTERSy[:REUTERSm]
+REUTERS_xtrain = REUTERSx[REUTERSm:]
+REUTERS_ytrain = REUTERSy[REUTERSm:]
+
+def REUTERSlstm_model(sequence_length, vocab_size, layer_size):
+    model = models.Sequential()
+    model.add(layers.Embedding(vocab_size, layer_size))
+    model.add(layers.Dropout(0.4))
+    model.add(layers.LSTM(layer_size))    
+    model.add(layers.Dropout(0.4))
+    model.add(layers.Dense(vocab_size, activation='softmax'))
+    return model
+
+REUTERSmodel = REUTERSlstm_model(seqlen, 5000, 32)
+optimizer = optimizers.Adam(learning_rate=0.01)
+REUTERSmodel.compile(loss='sparse_categorical_crossentropy', optimizer=optimizer)
+
+historyREUTERS = REUTERSmodel.fit(REUTERS_xtrain, REUTERS_ytrain,
+             validation_data=(REUTERS_xtest, REUTERS_ytest),
+             epochs=5,
+             verbose=1)
+
+plt.plot(historyREUTERS.history['loss'])
+plt.plot(historyREUTERS.history['val_loss'])
+
+tokenizerREUTERS.word_index
+
+REUTERSs = tokenizerREUTERS.texts_to_sequences(["American secrets exposed"])
+REUTERSinput = np.array(REUTERSs)
+for i in range(20):
+    pred = REUTERSmodel.predict(REUTERSinput)
+    maxREUTERS = np.argmax(pred)
+    
+    print(tokenizerREUTERS.sequences_to_texts([[maxREUTERS]]))
+    REUTERSinput = np.append(REUTERSinput[0,1:], maxREUTERS).reshape(1,seqlen-1)
+
+
+# ***BuzzFeed***
+
+BuzzFeed = df[df["publication"] == "Buzzfeed News"]
+BuzzFeed = BuzzFeed["title"]
+print(BuzzFeed)
+
+plt.hist([len(title.split()) for title in BuzzFeed])
+
+BuzzFeedwords = []
+for title in BuzzFeed:
+    title = title + " ENDLENDL"
+    #add an end token to each of the titles
+    BuzzFeedwords.append(title)
+    
+# init the tokenizer with a out_of_vocabulary token 
+tokenizerBuzzFeed = Tokenizer(oov_token="<OOV>")
+tokenizerBuzzFeed.num_words = maxwords
+# generate word indexes
+tokenizerBuzzFeed.fit_on_texts(BuzzFeedwords)
+
+# generate sequences and apply padding
+sequencesBuzzFeed = tokenizerBuzzFeed.texts_to_sequences(BuzzFeedwords)
+#TODO: reduce vocab to 10k 
+BuzzFeedset = set(i for j in sequencesBuzzFeed for i in j)
+
+
+# In[ ]:
+
+
+tokenizerBuzzFeed.word_index
+
+
+# In[ ]:
+
+
+len(BuzzFeedset)
+
+
+# In[ ]:
+
+
+OOVcount = []
+for seq in sequencesBuzzFeed:
+    OOVcount.append( list(seq).count(1) )
+
+
+# In[ ]:
+
+
+OOVcount.count(0)
+
+
+# In[ ]:
+
+
+print(len(OOVcount))
+
+
+# In[ ]:
+
+
+seqlen = 4
+step = 1
+BuzzFeedtokens = []
+
+for x, seq in enumerate(sequencesBuzzFeed):
+    if(OOVcount[x] > 0):
+        continue
+    if(len(seq)<seqlen + 1):
+        continue
+    for i in range(0, len(seq) - seqlen + 1, step):
+        BuzzFeedtokens.append(seq[i: i + seqlen])
+
+
+# In[ ]:
+
+
+print(sequencesBuzzFeed[5:10])
+BuzzFeedtokens[:10]
+
+
+# In[ ]:
+
+
+BuzzFeedx = np.zeros((len(BuzzFeedtokens), seqlen-1), dtype=int)
+BuzzFeedy = np.zeros((len(BuzzFeedtokens), 1), dtype=int)
+print(BuzzFeedx.shape)
+for i, seq in enumerate(BuzzFeedtokens):
+    BuzzFeedx[i] = seq[:seqlen - 1]
+    BuzzFeedy[i] = seq[-1]
+
+
+# In[ ]:
+
+
+BuzzFeedm = int(len(BuzzFeedy)*0.7)
+print(BuzzFeedm)
+BuzzFeed_xtest = BuzzFeedx[:BuzzFeedm]
+BuzzFeed_ytest = BuzzFeedy[:BuzzFeedm]
+BuzzFeed_xtrain = BuzzFeedx[BuzzFeedm:]
+BuzzFeed_ytrain = BuzzFeedy[BuzzFeedm:]
+
+
+# In[ ]:
+
+
+def BuzzFeedlstm_model(sequence_length, vocab_size, layer_size):
+    model = models.Sequential()
+    model.add(layers.Embedding(vocab_size, layer_size))
+    model.add(layers.Dropout(0.4))
+    model.add(layers.LSTM(layer_size))    
+    model.add(layers.Dropout(0.4))
+    model.add(layers.Dense(vocab_size, activation='softmax'))
+    return model
+
+
+# In[ ]:
+
+
+BuzzFeedmodel = BuzzFeedlstm_model(seqlen, len(BuzzFeedset), 32)
+optimizer = optimizers.Adam(learning_rate=0.01)
+BuzzFeedmodel.compile(loss='sparse_categorical_crossentropy', optimizer=optimizer)
+
+
+# In[ ]:
+
+
+historyBuzzFeed = BuzzFeedmodel.fit(BuzzFeed_xtrain, BuzzFeed_ytrain,
+             validation_data=(BuzzFeed_xtest, BuzzFeed_ytest),
+             epochs=10,
+             verbose=1)
+
+
+# In[ ]:
+
+
+plt.plot(historyBuzzFeed.history['loss'])
+plt.plot(historyBuzzFeed.history['val_loss'])
+
+
+# In[ ]:
+
+
+tokenizerBuzzFeed.word_index
+
+
+# In[ ]:
+
+
+BuzzFeeds = tokenizerBuzzFeed.texts_to_sequences(["Americans exposed to"])
+BuzzFeedinput = np.array(BuzzFeeds)
+for i in range(10):
+    pred = BuzzFeedmodel.predict(BuzzFeedinput)
+    #print(tokenizerBuzzFeed.sequences_to_texts([0]))
+    maxBuzzFeed = np.argmax(pred)
+    print(tokenizerBuzzFeed.sequences_to_texts([[maxBuzzFeed]]))
+    BuzzFeedinput = np.append(BuzzFeedinput[0,1:], maxBuzzFeed).reshape(1,seqlen-1)
+
+
+# ***PAST ATTEMPTS:***
+
+# **TRAINING TMZ**
+
+# In[ ]:
+
+
+TMZs = tokenizerTMZ.texts_to_sequences(["Donald Trump has been"])
+TMZinput = np.array(TMZs)
+for i in range(10):
+    print(TMZinput)
+    pred = TMZmodel.predict(TMZinput)
+    maxTMZ = np.argmax(pred)
+    print(tokenizerTMZ.sequences_to_texts([[maxTMZ]]))
+    TMZinput = np.append(TMZinput[0,1:], maxTMZ).reshape(1,seqlen-1)
+
+
+# In[ ]:
+
+
+maxTMZ = np.argmax(pred)
+maxTMZ
+
+
+# In[ ]:
+
+
+tokenizerTMZ.sequences_to_texts([[maxTMZ]])
+
+
+# In[ ]:
+
+
+tokenizerTMZ.word_index
+
+
+# **TRAINING FOX**
+
+# In[ ]:
+
+
+print(Foxwords[:5])
+
+
+# In[ ]:
+
+
+seqlen = 5
+step = 3
+Foxtokens = []
+#TMZf = paddedTMZ[:10000].flatten()
+for seq in Foxpadded:
+    for i in range(0, len(seq) - seqlen - 1, step):
+        Foxtokens.append(seq[i: i + seqlen])
+
+
+# In[ ]:
+
+
+print(len(Foxpadded))
+len(Foxtokens)
+
+
+# In[ ]:
+
+
+Foxx = np.zeros((len(Foxtokens), seqlen-1), dtype=int)
+Foxy = np.zeros((len(Foxtokens), 1), dtype=int)
+print(Foxx.shape)
+for i, seq in enumerate(Foxtokens):
+    Foxx[i] = seq[:seqlen - 1]
+    Foxy[i] = seq[-1]
+
+
+# In[ ]:
+
+
+print(Foxtokens[0:6])
+print(Foxx[1])
+print(Foxy[1])
+
+
+# In[ ]:
+
+
+Foxm = int(len(Foxy)*0.7)
+print(Foxm)
+Fox_xtest = Foxx[:Foxm]
+Fox_ytest = Foxy[:Foxm]
+Fox_xtrain = Foxx[Foxm:]
+Fox_ytrain = Foxy[Foxm:]
+
+
+# In[ ]:
+
+
+def Foxlstm_model(sequence_length, vocab_size, layer_size):
+    model = models.Sequential()
+    model.add(layers.Embedding(vocab_size, layer_size))
+    model.add(layers.Dropout(0.2))
+    model.add(layers.LSTM(layer_size))    
+    model.add(layers.Dropout(0.2))
+    model.add(layers.Dense(vocab_size, activation='softmax'))
+    return model
+
+
+# In[ ]:
+
+
+Foxmodel = Foxlstm_model(seqlen, len(Foxset), 32)
+optimizer = optimizers.RMSprop(learning_rate=0.01)
+Foxmodel.compile(loss='sparse_categorical_crossentropy', optimizer=optimizer)
+
+
+# In[ ]:
+
+
+print(Fox_xtrain[:5])
+print(Fox_ytrain[:5])
+
+
+# In[ ]:
+
+
+Foxmodel.fit(Fox_xtrain, Fox_ytrain,
+             validation_data=(Fox_xtest, Fox_ytest),
+             epochs=20,
+             verbose=1)
+
+
+# In[ ]:
+
+
+Foxs = Foxtokenizer.texts_to_sequences(["Trump is going to"])
+Foxinput = np.array(Foxs)
+for i in range(10):
+    print(Foxinput)
+    pred = Foxmodel.predict(Foxinput)
+    maxFox = np.argmax(pred)
+    print(Foxtokenizer.sequences_to_texts([[maxFox]]))
+    Foxinput = np.append(Foxinput[0,1:], maxFox).reshape(1,seqlen-1)
+
+
+# In[ ]:
+
+
+maxFox = np.argmax(pred)
+maxFox
+
+
+# In[ ]:
+
+
+Foxtokenizer.word_index
+
+
+# **TRAINING NYT** 
+
+# In[ ]:
+
+
+print(NYTwords[:5])
+
+
+# In[ ]:
+
+
+seqlen = 5
+step = 3
+NYTtokens = []
+#TMZf = paddedTMZ[:10000].flatten()
+for seq in NYTpadded[:10000]:
+    for i in range(0, len(seq) - seqlen - 1, step):
+        NYTtokens.append(seq[i: i + seqlen])
+
+
+# In[ ]:
+
+
+NYTx = np.zeros((len(NYTtokens), seqlen-1), dtype=int)
+NYTy = np.zeros((len(NYTtokens), 1), dtype=int)
+print(NYTx.shape)
+for i, seq in enumerate(NYTtokens):
+    NYTx[i] = seq[:seqlen - 1]
+    NYTy[i] = seq[-1]
+
+
+# In[ ]:
+
+
+print(len(NYTpadded))
+len(NYTtokens)
+
+
+# In[ ]:
+
+
+NYTm = int(len(NYTy)*0.7)
+print(NYTm)
+NYT_xtest = NYTx[:Foxm]
+NYT_ytest = NYTy[:Foxm]
+NYT_xtrain = NYTx[Foxm:]
+NYT_ytrain = NYTy[Foxm:]
+
+
+# In[ ]:
+
+
+def Foxlstm_model(sequence_length, vocab_size, layer_size):
+    model = models.Sequential()
+    model.add(layers.Embedding(vocab_size, layer_size))
+    model.add(layers.LSTM(layer_size))    
+    model.add(layers.Dropout(0.3))
+    model.add(layers.Dense(vocab_size, activation='softmax'))
+    return model
+
+
+# In[ ]:
+
+
+Foxmodel = Foxlstm_model(seqlen, len(Foxset), 32)
+optimizer = optimizers.RMSprop(learning_rate=0.01)
+Foxmodel.compile(loss='sparse_categorical_crossentropy', optimizer=optimizer)
